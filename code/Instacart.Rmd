@@ -1,0 +1,780 @@
+---
+title: "Instacart"
+author: "Michael Fehl -- 730321206"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# **Predicting Future Consumer Purchases**
+
+In this group research project, we are attempting to predict whether or not a customer reorders a given product based on their order history. In each order history, we have a breakdown of all the products purchased for that given order, including the pattern of which they put the item into their cart, the time of day they ordered, and the day of the week. 
+
+This dataset was obtained... blah blah blah
+The data already had training data held out for our models to train on, and test data points kept to test our models on. However, we do not have access to these test data points unless we submit our models, which is not what we're trying to do. So instead, we will need to redefine the original training data set (1.4m obs) to become our test points, and the prior data set (30m obs) as our training data.
+
+
+
+# Importing Data & Data Exploration
+===
+
+```{r import & view, include=FALSE}
+library(httr)
+library(tidyverse)
+library(ggthemes)
+library(corrplot)
+source("https://raw.githubusercontent.com/mtfehl/ECON573/main/data/ggplot_theme_Publication-2.R")
+# Import CSV data from Github
+depts <- read.csv("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/departments.csv")
+aisles <- read.csv("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/aisles.csv")
+order_train <- read.csv("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/order_products__train.csv")
+products <- read.csv("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/products.csv")
+
+# large file (3.4m obs)
+response <- GET("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/orders.csv",
+                timeout(300))
+
+orders <- read.csv(text = content(response, "text"), header = T)
+# large file (30m+ obs)
+response2 <- GET("https://media.githubusercontent.com/media/mtfehl/ECON573/main/data/order_products__prior.csv",
+                timeout(600))
+order_prior <- read.csv(text = content(response2, "text"), header = TRUE)
+
+rm(response, response2)
+```
+
+
+```{r}
+# Data exploration
+head(order_prior, 12) # All the purchased products in a given order, for all order_ids
+head(order_train, 12) # Subset of training data in same format as order_prior
+head(orders, 12) # All orders for user and the associated order_id
+head(products) # Names of all the products
+head(aisles) # Names of all the aisles
+head(depts) # Names of all the departments
+
+# Check
+head(orders)
+orders %>% 
+  filter(order_id == 2) # it seems like orders expands on the user history of total orders
+head(order_prior) # order_prior focuses on the products ordered in a given order
+
+```
+
+
+# Data Manipulation & Visualization
+===
+
+``` {r manipulation & visualization}
+# Response variable: reordered (1/0)
+# We want to predict whether a given product is reordered or not by a customer
+### put info and distribution of response here, its relationship w/ other variables
+
+# Distribution of order by hour of day
+ggplot(orders, aes(x = order_hour_of_day, fill = as.factor(order_hour_of_day))) + 
+  geom_histogram(bins = 24) +
+  labs(title = "Order Frequency by Hour",
+       x = "Time of Day") +
+  theme_Publication() + 
+  theme(legend.position = "none")
+
+
+# See how day of week variable is coded (numeric)
+class(orders$order_dow)
+
+# Changing DOW variable to be a factor variable with character labels
+orders %>% 
+  mutate(order_dow = factor(order_dow, labels = c("Saturday", "Sunday", "Monday",
+                                                  "Tuesday", "Wednesday", "Thursday",
+                                                  "Friday"))) %>% 
+  ggplot(., aes(x = order_dow, fill = as.factor(order_dow))) + 
+  geom_bar(width = 0.75, ) +
+  labs(title = "Order Frequency by Day",
+       x = " Day of the Week") +
+  theme_Publication() +           # Distribution of order by day of the week
+  scale_fill_Publication() + 
+  theme(legend.position = "none")
+
+
+# Distribution of order frequency
+ggplot(orders, aes(x = days_since_prior_order, fill = as.factor(days_since_prior_order))) + 
+geom_histogram(bins = 30) +
+labs(title = "Frequency of Customer Ordering",
+     x = " Days since Prior Order") +
+theme_Publication() +     
+theme(legend.position = "none") # We see most reorders happen bw/ 1-8 days. Interesting pattern -- we see a spike in reordering every 7 days. Finally, we see the largest single spike at 30 days -- not sure as if I can interpret this as just 30 days or maybe 30+ days.
+
+
+# How many NA values are in our "days_since_prior_order" column
+table(is.na(orders$days_since_prior_order)) # 206209
+
+# Most ordered products? 
+## subset of product data
+product_freq_table <- order_prior %>% 
+  count(product_id) %>% # count frequency of each product
+  arrange(desc(n)) %>% # arrange in descending order
+  inner_join(., products, by = "product_id") %>% # merge data sets to bring in associated product names
+  select(-c(aisle_id, department_id)) %>%  # subset of only columns product_id, name, and frequency (n)
+  slice(1:20) # access the 20 most frequent orders
+## plot 
+ggplot(product_freq_table, aes(x = reorder(product_name, -n), y = n, fill = as.factor(product_name))) + 
+geom_bar(stat = "identity") +
+labs(title = "Product Order Frequency",
+     x = "Name of Product",
+     y = "Total orders") +
+theme_Publication() +  
+scale_colour_Publication() +
+theme(legend.position = "none",
+      axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Data Manipulation
+## First, I want to create a single data frame that combines all the order-specific information to the user-specific information, so that we can add more variables that are order-level and user-level into the same data frame, which will be useful for our classification models later.
+
+``` {r create big data set}
+# Create a full data set of all orders with all information on each order -- order_id, user_id, all products in that order, the associated aisle & department, etc.
+full_order_data <- orders %>% 
+  full_join(., order_train, by = "order_id") %>% 
+  inner_join(., order_prior, by = "order_id") %>% 
+  arrange(user_id, order_number) %>%  
+  mutate(product_id = product_id.y,
+         add_to_cart_order = add_to_cart_order.y,
+         reordered = reordered.y,
+         order_dow = factor(order_dow, labels = c("Saturday", "Sunday", "Monday",
+                                                  "Tuesday", "Wednesday", "Thursday",
+                                                  "Friday"))) %>% 
+  select(-c(product_id.x, add_to_cart_order.x, reordered.x,
+            product_id.y, add_to_cart_order.y, reordered.y)) %>% 
+  inner_join(., products, by = "product_id") %>% 
+  inner_join(., aisles, by = "aisle_id") %>% 
+  inner_join(., depts, by = "department_id") %>% 
+  select(-c(aisle_id, department_id, product_id))
+
+full_order_data[1:1000,] # looks good
+
+rm(order_prior, order_train)
+```
+
+## **New Variable 1:** 
+### Frequency each Customer Orders a Given Product
+
+``` {r New Variable 1}
+# Now I want to create new variables
+## First -- frequency each customer orders a given product
+product_count_per_user <- full_order_data %>% 
+  group_by(user_id, product_name) %>% 
+  summarize(product_count = n()) %>% 
+  arrange(user_id, desc(product_count))
+
+```
+
+## **New Variable 2:**
+### Average time of day & day of the week each customer places an order
+
+``` {r nv2}
+## Average time of day & DOW customer places an order
+avg_order_time <- full_order_data %>% 
+  group_by(user_id) %>%
+  summarize(avg_hour = mean(order_hour_of_day),
+            avg_day = mean(as.numeric(order_dow)))
+
+head(avg_order_time)
+#plot -- not sure how to make this a heatmap
+ggplot(avg_order_time, aes(x = avg_hour, y = avg_day)) +
+  geom_point() +
+  labs(x = "Average Hour of Day", y = "Average Day of Week",
+       title = "Average Order Time") +
+  scale_y_continuous(breaks = 0:6, 
+                     labels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")) +
+  theme_Publication()
+
+```
+
+## **New Variables 3 & 4:** 
+### Which products are ordered more frequently based on the day of the week
+### Which products are ordered more frequently based on the time of the day
+
+``` {r nv3&4}
+# What products are ordered more frequently based on DOW?
+dow_freq_order <- full_order_data %>% 
+  group_by(order_dow, product_name) %>%
+  summarize(product_count_day = n()) %>% 
+  arrange(order_dow, desc(product_count_day))
+
+head(dow_freq_order)
+
+# Top 3 products for each day of the week
+dow_freq_order %>%
+  group_by(order_dow) %>%
+  top_n(3, product_count_day) %>% 
+  ggplot(., aes(x = reorder(product_name, -product_count_day), y = product_count_day)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Product Name", y = "Product Count",
+       title = "Top 3 Products Ordered by Day of Week") +
+  theme_clean() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ order_dow, nrow = 2, scales = "free_x")
+
+# What products are ordered more frequently based on time of day?
+hour_freq_order <- full_order_data %>%
+  group_by(order_hour_of_day, product_name) %>%
+  summarize(product_count_hour = n()) %>% 
+  arrange(order_hour_of_day, desc(product_count_hour))
+
+head(hour_freq_order)
+
+# Top 3 products for each hour of the day
+hour_freq_order %>%
+  group_by(order_hour_of_day) %>%
+  top_n(3, product_count_hour) %>% 
+ggplot(., aes(x = reorder(product_name, -product_count_hour), y = product_count_hour)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Product Name", y = "Product Count",
+       title = "Top 3 Products Ordered by Hour of Day") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8)) +
+  facet_wrap(~ order_hour_of_day, nrow = 2, scales = "free_x")
+```
+
+## **New Variables 5 & 6:** 
+### Size of each individual order
+### Average order size per customer
+
+``` {r nv5&6}
+# Calculate order size
+order_size <- full_order_data %>%
+  group_by(order_id) %>%
+  summarize(order_size = n())
+
+head(order_size)
+
+#plot
+
+# Aggregate order size at the customer level and calculate average order size
+avg_order_size <- order_size %>%
+  inner_join(full_order_data, by = "order_id") %>%
+  group_by(user_id) %>%
+  summarize(avg_order_size = mean(order_size))
+
+head(avg_order_size)
+```
+
+## **New Variables 7 & 8:** 
+### Which products are reordered the most?
+### User-level product reordering ratio
+
+``` {r nv7&8}
+# Which products are reordered the most?
+reorder_counts <- full_order_data %>%
+  group_by(product_name) %>%
+  summarize(total_reorders = sum(reordered)) %>% 
+  arrange(desc(total_reorders))
+
+head(reorder_counts)
+# plot
+reorder_counts %>% 
+  slice(1:20) %>% 
+  ggplot(., aes(x = reorder(product_name, -total_reorders), y = total_reorders, 
+                fill = as.factor(product_name))) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Product Reorder Frequency",
+     x = "Name of Product",
+     y = "Total Reorders") +
+  theme_Publication() +  
+  scale_colour_Publication() +
+  theme(legend.position = "none",
+      axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Product reorder ratio, per user
+product_reorder_ratio <- full_order_data %>%
+  group_by(user_id, product_name) %>%
+  summarize(product_reorder_ratio = sum(reordered) / n()) %>%
+  arrange(user_id, desc(product_reorder_ratio))
+
+product_reorder_ratio
+# Distributions of all the variables. Try to replicate that cool graph of which products are linked
+
+```
+
+## **New Variable 9:**
+### Reorder rate by item position in cart
+
+``` {r nv9}
+# What is the relationship between the order in which an item is added to the cart & reordering it?
+reorder_rate_by_position <- full_order_data %>%
+  group_by(add_to_cart_order) %>%
+  summarize(reorder_rate = mean(reordered)) 
+
+# plot
+ggplot(reorder_rate_by_position, aes(x = add_to_cart_order, y = reorder_rate)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Cart Position", y = "Reorder Rate", title = "Reorder Rate by Cart Position") +
+  theme_Publication() +
+  scale_fill_Publication()
+# Logarithmic relationship until cart has ~50 items -- curious to see if these are just some outlier cases
+
+# All different order sizes -- ranges from 1:145 items in a single order
+range(full_order_data$add_to_cart_order)
+
+# Filter observations for orders of over 50 items
+full_order_data %>% 
+  filter(add_to_cart_order > 50) %>% 
+  group_by(order_id)
+# Only 26,359 observations for 3,081 orders.. 
+3081/32434489
+# That's only 0.0095% of our total orders -- so we only care about orders below this threshold
+
+# Redefine variable to filter only orders with 50 or less items in cart
+reorder_rate_by_position <- reorder_rate_by_position %>% 
+  filter(add_to_cart_order <= 50) 
+
+# New plot -- looks much better. We now see a clear relationship b/w cart position & reordering
+ggplot(reorder_rate_by_position, aes(x = add_to_cart_order, y = reorder_rate)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Cart Position", y = "Reorder Rate", title = "Reorder Rate by Cart Position") +
+  theme_Publication() +
+  scale_fill_Publication()
+
+head(reorder_rate_by_position)
+```
+
+# Merge New Variables back into Full DF
+
+``` {r merge new variables}
+
+full_order_data[1:1000,]
+
+full_order_data <- full_order_data %>% 
+  left_join(., avg_order_time, by = "user_id") %>% 
+  left_join(., dow_freq_order, by = c("order_dow", "product_name")) %>% 
+  left_join(., hour_freq_order, by = c("order_hour_of_day", "product_name")) %>% 
+  left_join(., order_size, by = "order_id") %>% 
+  left_join(., avg_order_size, by = "user_id") %>% 
+  left_join(., reorder_counts, by = "product_name") %>% 
+  left_join(., product_reorder_ratio, by = c("user_id", "product_name")) %>% 
+  left_join(., reorder_rate_by_position, by = "add_to_cart_order")
+
+full_order_data[1:1000,]
+```
+
+
+## Correlation Matrix
+
+```{r correlation matrix}
+# Class of each variable
+full_order_data %>% 
+  sapply(class)
+
+# Correlation Matrix of Variables
+corr_matrix <- full_order_data %>% 
+  mutate(order_dow_numeric = as.numeric(order_dow)) %>% 
+  {cor(.[,-c(1, 2, 3, 5, 10, 11, 12)],
+       use = "pairwise.complete.obs")}
+
+# Visualize Corr Matrix
+corrplot(corr_matrix, method="shade", type="lower", 
+         title="Instacart Correlation Matrix",
+         tl.cex = 0.75, tl.col = "black", tl.srt = 45) 
+```
+
+### Mostly uncorrelated variables -- some that are correlated tend to be because they were created by that variable (reordered / product_reorder_ratio). We do find that reorder_rate & add_to_cart_order have a negative relationship, alongside reorder_rate & order_size. Total_reorders has a positive correlation w/ product_count_day & product_count_hour.
+
+===
+
+# Model Building
+
+## Logit
+===
+
+``` {r data splitting & logit}
+# data set is huge -- need to split it up randomly and rerun it -- use mini-batch training
+# First -- create a subset of the original data set 1/4 of the size (32m -> 8m)
+set.seed(444)
+full_order_data <- full_order_data[sample(nrow(full_order_data), 8000000),]
+full_order_data
+
+
+# Second -- split original data set into training & test data (80/20)
+train_index <- sample(1:nrow(full_order_data), 0.8*nrow(full_order_data))
+train_data <- full_order_data[train_index,]
+test_data <- full_order_data[-train_index,]
+
+# Define batch size & num of batches
+batch_size <- 50000
+num_batches <- ceiling(nrow(train_data) / batch_size)
+
+library(pROC)
+library(class)
+### Logit ###
+#############
+
+# Mini-batch training loop
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * batch_size) + 1
+  end_index <- min(i * batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+
+  insta_logit <-  glm(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+        add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+        order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+      data = batch_data, family = "binomial")
+  
+  print(paste("Completed batch", i, "of", num_batches))
+}
+
+# Summary statistics -- we find that order_number, order_dowTueday (relative to Saturday), days_since_prior_order, add_to_cart_order, avg_hour, order_size, avg_order_size, and product_reorder_rate are all statistically significant at all standard significance levels.
+summary(insta_logit)
+
+## Misclassificiation error rate
+logit_preds <- predict(insta_logit, newdata = test_data, type = "response")
+# Set A threshold value = 0.5
+logit_threshold=ifelse(logit_preds>0.5,"1","0")
+# Confusion Matrix
+table(logit_threshold, test_data$reordered) 
+# Test Error (diagonal/total)
+mean(logit_threshold==test_data$reordered, na.rm = T) # logit model correctly predicts 86.37% of the time
+# I.e. misclas error rate = 13.63%
+
+# ROC Curve & AUC Value
+roc_curve <- roc(test_data$reordered, logit_preds)
+plot(roc_curve, main = "ROC Curve", col = "blue")
+auc <- auc(roc_curve)
+print(paste("AUC:", auc))
+```
+
+
+## LDA & QDA
+===
+
+``` {r LDA & QDA}
+# Replace NA's with 0s in data, since they just correspond to # of days since previous order -- so 0 makes sense
+# First, on the training data
+train_data <- train_data %>% 
+  mutate_all(~ifelse(is.na(.), 0, .))
+# Test to see if it worked -- yes it did
+sum(is.na(train_data)) # 0
+
+# Now same on test data
+test_data <- test_data %>% 
+  mutate_all(~ifelse(is.na(.), 0, .))
+# Again, we check -- looks good
+sum(is.na(test_data)) # 0
+
+library(MASS)
+### LDA & QDA ###
+#################
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * batch_size) + 1
+  end_index <- min(i * batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+  
+  insta_LDA <- lda(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order + 
+                     add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                     order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate,
+                   data = batch_data)
+  
+  insta_QDA <- qda(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+                   add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                   order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate,
+                 data = batch_data)
+  
+  
+  print(paste("Completed batch", i, "of", num_batches))
+  }
+
+lda.pred = predict(insta_LDA, newdata = test_data, type="response")
+qda.pred = predict(insta_QDA, newdata = test_data, type="response")
+
+# Plot of LDA model
+plot(insta_LDA)
+
+# Need to access column 'class' for LDA/QDA to create confusion matrix and calculate test error
+table(lda.pred$class, test_data$reordered)
+mean(lda.pred$class==test_data$reordered, na.rm = T) # LDA Correctly predicts 84.93% of time - misclassification error rate of 15.07%.
+
+table(qda.pred$class, test_data$reordered) # QDA correctly predicts 83.00% of the time - misclas error rate = 17.00%. 
+mean(qda.pred$class==test_data$reordered, na.rm = T)
+```
+
+
+## kNN
+===
+
+``` {r kNN}
+# kNN
+ #only gonna use significant predictors from previous models in KNN model to reduce feature space
+predictors <- c("order_number", "order_dow", "days_since_prior_order", 
+    "add_to_cart_order", "avg_hour", "order_size", "avg_order_size", "product_reorder_ratio")
+
+# Create a subset of data to use , since the larger the data points the more computationally expensive kNN becomes
+knn_subset_data <- train_data[sample(nrow(train_data), 300000),]
+
+knn_train_index <- sample(1:nrow(knn_subset_data), 0.8*nrow(knn_subset_data))
+knn_train_data <- knn_subset_data[knn_train_index,]
+knn_test_data <- knn_subset_data[-knn_train_index,]
+
+# Experimented with different batch sizes
+knn_batch_size = 2500
+knn_num_batches <- ceiling(nrow(knn_train_data) / knn_batch_size)
+  
+## Find optimal K value for kNN using 10-fold CV
+library(caret)
+# Define range of k values
+k_values <- c(5, 7, 9, 11)  # Example range of odds 5-11.
+
+# Define the number of folds for cross-validation
+num_folds <- 5  # Example: 10-fold cross-validation
+
+# Define the control parameters for cross-validation
+ctrl <- trainControl(method = "cv",  # Use cross-validation
+                     number = num_folds)  # Number of folds
+
+# Train kNN model using different values of k
+knn_train <- train(as.factor(reordered) ~ order_number + order_dow + days_since_prior_order +
+                     add_to_cart_order + avg_hour + order_size + avg_order_size +
+                     product_reorder_ratio,  
+                   data = knn_train_data,  # Training data
+                   method = "knn",  # kNN method
+                   trControl = ctrl,  # Cross-validation control
+                   tuneGrid = data.frame(k = k_values))  # Grid of k values
+
+# Print the results
+print(knn_train) # best results from k = 1:5 -- 5 had highest accuracy (0.7162)
+# Plot performance metric vs. k values
+plot(knn_train)
+
+## Loop through batches
+for (i in 1:knn_num_batches) {
+  # Get indices for the current batch
+  start_index <- (i - 1) * knn_batch_size + 1
+  end_index <- min(i * knn_batch_size, nrow(knn_train_data))
+  
+  # Read the current batch of training data
+  knn_batch_data <- knn_train_data[start_index:end_index, ]
+  
+# Train kNN model on current batch
+  knn_model <- knn(train = knn_batch_data[, predictors], 
+                   test = knn_test_data[, predictors], 
+                   cl = knn_batch_data$reordered, 
+                   k = 5)
+  # Print progress
+  print(paste("Completed batch", i, "of", knn_num_batches))
+}
+
+table(knn_model, knn_test_data$reordered) # KNN with K=5 confusion matrix
+mean(knn_model==knn_test_data$reordered, na.rm = T) # Prediction accuracy of 68.83%.
+
+```
+
+
+## Classification Tree
+===
+
+``` {r classification tree}
+library(tree)
+### Classification Tree ###
+###########################
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * batch_size) + 1
+  end_index <- min(i * batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+
+  insta_tree <-  tree(as.factor(reordered) ~ order_number + order_dow + order_hour_of_day + 
+                        days_since_prior_order + add_to_cart_order + avg_hour + avg_day + 
+                        product_count_day + product_count_hour + order_size + avg_order_size + 
+                        total_reorders + product_reorder_ratio + reorder_rate, 
+                      data = batch_data)
+  
+  print(paste("Completed batch", i, "of", num_batches))
+}
+
+# predicting values in our test split using our subsetted model
+tree.pred <- predict(insta_tree, newdata = test_data, type = "class")
+# confusion matrix
+table(tree.pred, test_data$reordered) # correctly predicts 87.74% of the time. Misclas error rate of 12.26%.
+mean(tree.pred==test_data$reordered)
+
+# Cross-Validation on our Classification Tree
+cv.insta <- cv.tree(insta_tree, FUN = prune.misclass) # using cv to determine optimal level of tree complexity
+cv.insta$size # tree sizes
+cv.insta$dev # tree size of 3 or 6 terminal nodes minimizes CV classification error 
+cv.insta$k # alpha value of 0 -- no complexity penalty (unpruned tree minimizes our CV classification error)
+
+# Plotting CV Trees
+par(mfrow = c(1, 2))
+plot(cv.insta$size , cv.insta$dev, type = "b") # Plot CV Classification error against tree size
+min_dev = which.min(cv.insta$dev); min_dev # CV Classification error minimized at the first value (cv.insta$dev[1])
+points(cv.insta$size[min_dev], cv.insta$dev[min_dev], col = "red", cex = 2, pch=20)
+
+plot(cv.insta$k, cv.insta$dev, type = "b") # Plot CV Classification error against alpha values
+points(0, cv.insta$dev[min_dev], col = "red", cex = 2, pch = 20)
+
+# Pruning of our tree
+prune.insta <- prune.misclass(insta_tree , best = 6)
+plot(prune.insta); text(prune.insta , pretty = 0, cex = 0.5) # tree with 6 terminal nodes. We see the following vars: product_reorder_ratio & order_number
+
+tree.pred2 <- predict(prune.insta, test_data, # predicting values in our test split using our subsetted model
+                     type = "class")
+table(tree.pred2, test_data$reordered) # same table as before -- test error of 87.74%
+mean(tree.pred2==test_data$reordered)
+```
+
+
+## Random Forest
+===
+
+``` {r random forest}
+library(randomForest)
+### Random Forests ###
+######################
+
+# Tried with a smaller batch size to save time -- took 20 mins at 1/5 of the size -- over an hour for full size
+rf_batch_size <- 10000
+
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * rf_batch_size) + 1
+  end_index <- min(i * rf_batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+
+  insta_rf <-  randomForest(as.factor(reordered) ~ order_number + order_dow + order_hour_of_day + 
+                              days_since_prior_order + add_to_cart_order + avg_hour + avg_day + 
+                              product_count_day + product_count_hour +order_size + avg_order_size + 
+                              total_reorders + product_reorder_ratio + reorder_rate, 
+                            data = batch_data)
+  
+  print(paste("Completed batch", i, "of", num_batches))
+}
+
+# Variable importance
+importance(insta_rf)
+varImpPlot(insta_rf)
+
+rf_preds <- predict(insta_rf, newdata = test_data, 
+                    type = "class")
+table(rf_preds, test_data$reordered)
+# Misclassification Error Rate (test error) of 11.77%. Correctly predicts 88.23% of the values.
+mean(rf_preds==test_data$reordered)
+
+```
+
+
+## Boosting
+===
+
+``` {r boosting}
+library(xgboost)
+### Boosting ###
+################
+params <- list(
+  objective = "binary:logistic",  # Binary classification
+  eval_metric = "auc",             # Evaluation metric
+  eta = 0.1,                       # Learning rate
+  max_depth = 6,                   # Maximum depth of trees
+  nrounds = 10                    # Number of boosting rounds
+)
+
+# Initialize model
+xgb_model <- NULL
+
+# Mini-batch training loop
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * batch_size) + 1
+  end_index <- min(i * batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+  
+  # Train or update XGBoost model
+  if (is.null(xgb_model)) {
+    # Train initial model
+    xgb_model <- xgboost(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+                           add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                           order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+                         data = batch_data, params = params, nthread = parallel::detectCores())
+  } else {
+    # Update model with current batch
+    xgb_model <- xgboost(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+                           add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                           order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+                         data = batch_data, params = params, nthread = parallel::detectCores(),
+                         model = xgb_model)
+  }
+  
+  # Print progress
+  print(paste("Completed batch", i, "of", num_batches))
+}
+
+# Misclas error rate of %.
+boost_preds <- predict(xgb_model, newdata = test_data, type = "response")
+table(boost_preds, test_data$reordered)
+mean(boost_preds==test_data$reordered) # Correctly predicts % of the time.
+
+# Evaluate model
+auc <- auc(test_data$reordered, boost_preds)
+print(paste("AUC:", auc))
+
+
+```
+
+
+## SVM
+===
+
+``` {r svm}
+# Support Vector Machines
+for (i in 1:num_batches) {
+  # Calculate start and end indices for the current batch
+  start_index <- ((i - 1) * batch_size) + 1
+  end_index <- min(i * batch_size, nrow(train_data))
+  
+  # Read the current batch of training data
+  batch_data <- train_data[start_index:end_index, ]
+
+  svmfit <- svm(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+                             add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                             order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+                           data = batch_data, kernel = "radial", gamma = 1, cost = 1)
+
+    
+  print(paste("Completed batch", i, "of", num_batches))
+}
+
+plot(svmfit, train_data)
+summary(svmfit)
+
+tune.out <- tune(svm , y ! ., data = dat[train , ],
+                 kernel = "radial",
+                 ranges = list(
+                   cost = c(0.1, 1, 10, 100, 1000),
+                   gamma = c(0.5, 1, 2, 3, 4)
+                   )
+                 )
+
+
+table(true = dat[-train , "y"],
+      pred = predict(tune.out$best.model, newdata = dat[-train, ]))
+
+```
+
+
+
+
+``` {r save workspace}
+save.image()
+
+```
