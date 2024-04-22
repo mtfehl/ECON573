@@ -1,4 +1,3 @@
-# Data folder
 ## Space for all data that will be used in this research project
 
 Data is provided by Instacart and was sourced via their competition on Kaggle:
