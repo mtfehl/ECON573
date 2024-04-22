@@ -3,8 +3,8 @@
 theme_Publication <- function(base_size=14, base_family="sans") {
   library(grid)
   library(ggthemes)
-  (theme_foundation(base_size=base_size, base_family=base_family)
-    + theme(plot.title = element_text(face = "bold",
+  (theme_foundation(base_size=base_size, base_family=base_family) + 
+   theme(plot.title = element_text(face = "bold",
                                       size = rel(1.2), hjust = 0.5),
             text = element_text(),
             panel.background = element_rect(colour = NA),
@@ -51,8 +51,8 @@ scale_colour_Publication <- function(...){
 theme_dark_grey <- function(base_size=14, base_family="sans") {
   library(grid)
   library(ggthemes)
-  (theme_foundation(base_size=base_size, base_family=base_family)
-    + theme(plot.title = element_text(face = "bold", colour = '#ffffb3',
+  (theme_foundation(base_size=base_size, base_family=base_family) + 
+   theme(plot.title = element_text(face = "bold", colour = '#ffffb3',
                                       size = rel(1.2), hjust = 0.5),
             text = element_text(),
             panel.background = element_rect(colour = NA, fill = 'grey20'),
@@ -132,8 +132,8 @@ scale_colour_Publication_dark <- function(...){
 theme_dark_blue <- function(base_size=14, base_family="sans") {
   library(grid)
   library(ggthemes)
-  (theme_foundation(base_size=base_size, base_family=base_family)
-    + theme(plot.title = element_text(face = "bold", colour = '#ffffb3',
+  (theme_foundation(base_size=base_size, base_family=base_family) + 
+   theme(plot.title = element_text(face = "bold", colour = '#ffffb3',
                                       size = rel(1.2), hjust = 0.5), # margin = margin(0,0,20,0)),
             text = element_text(),
             panel.background = element_rect(colour = NA, fill = '#282C33'),
