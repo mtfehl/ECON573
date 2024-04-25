@@ -66,7 +66,7 @@ head(depts) # Names of all the departments
 # Response variable: reordered (1/0)
 # We want to predict whether a given product is reordered or not by a customer
 ### put info and distribution of response here, its relationship w/ other variables
-
+par(mfrow=c(2,2))
 # Distribution of order by hour of day
 ggplot(orders, aes(x = order_hour_of_day, fill = as.factor(order_hour_of_day))) + 
   geom_histogram(bins = 24) +
@@ -113,6 +113,7 @@ product_freq_table <- order_prior %>%
   inner_join(., products, by = "product_id") %>% # merge data sets to bring in associated product names
   select(-c(aisle_id, department_id)) %>%  # subset of only columns product_id, name, and frequency (n)
   slice(1:20) # access the 20 most frequent orders
+
 ## plot of most frequently ordered products
 ggplot(product_freq_table, aes(x = reorder(product_name, -n), y = n, fill = as.factor(product_name))) + 
 geom_bar(stat = "identity") +
@@ -123,6 +124,22 @@ theme_Publication() +
 scale_colour_Publication() +
 theme(legend.position = "none",
       axis.text.x = element_text(angle = 45, hjust = 1))
+## plot of most frequently ordered products, by aisle
+product_freq_table %>% 
+  left_join(products, by = "product_name") %>% 
+  select(n, department_id, aisle_id) %>% 
+  left_join(depts, by = "department_id") %>% 
+  left_join(aisles, by = "aisle_id") %>% 
+  select(n, department, aisle) %>% 
+  ggplot(., aes(x = reorder(aisle, -n), y = n, fill = as.factor(aisle))) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Product Order Frequency",
+       x = "Name of Aisle",
+       y = "Total orders") +
+  theme_Publication() +  
+  scale_colour_Publication() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 # Merging Data
@@ -148,8 +165,9 @@ full_order_data <- orders %>%
   inner_join(., depts, by = "department_id") %>% 
   select(-c(aisle_id, department_id, product_id))
 
-full_order_data[1:1000,] # looks good
+head(full_order_data) # looks good
 
+# Remove extra objects from environment
 rm(order_prior, order_train, orders)
 ```
 
@@ -168,6 +186,7 @@ product_count_per_user <- full_order_data %>%
   summarize(product_count = n()) %>% 
   arrange(user_id, desc(product_count))
 
+head(product_count_per_user)
 ```
 
 ## **New Variable 2:**
@@ -181,20 +200,21 @@ avg_order_time <- full_order_data %>%
             avg_day = mean(as.numeric(order_dow)))
 
 head(avg_order_time)
-#plot -- not sure how to make this a heatmap
+#plot -- heatmap
 ggplot(avg_order_time, aes(x = avg_hour, y = avg_day)) +
-  geom_point() +
+  geom_tile(aes(fill = after_stat(count)), stat = "bin2d") +
   labs(x = "Average Hour of Day", y = "Average Day of Week",
        title = "Average Order Time") +
   scale_y_continuous(breaks = 0:6, 
                      labels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")) +
-  theme_Publication()
+  theme_Publication() +
+  scale_fill_gradient(low = "blue", high = "red")
 
 ```
 
 ## **New Variables 3 & 4:** 
-### Which products are ordered more frequently based on the day of the week
-### Which products are ordered more frequently based on the time of the day
+### Which products are ordered more frequently based on the day of the week?
+### Which products are ordered more frequently based on the time of the day?
 
 ``` {r nv3&4}
 # What products are ordered more frequently based on DOW?
@@ -209,6 +229,18 @@ head(dow_freq_order)
 dow_freq_order %>%
   group_by(order_dow) %>%
   top_n(3, product_count_day) %>% 
+  ggplot(., aes(x = reorder(product_name, -product_count_day), y = product_count_day)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Product Name", y = "Product Count",
+       title = "Top 3 Products Ordered by Day of Week") +
+  theme_clean() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ order_dow, nrow = 2, scales = "free_x")
+
+dow_freq_order %>%
+  group_by(order_dow) %>%
+  top_n(6, product_count_day) %>% 
   ggplot(., aes(x = reorder(product_name, -product_count_day), y = product_count_day)) +
   geom_bar(stat = "identity", fill = "skyblue") +
   labs(x = "Product Name", y = "Product Count",
@@ -297,6 +329,21 @@ product_reorder_ratio <- full_order_data %>%
 product_reorder_ratio
 # Distributions of all the variables. Try to replicate that cool graph of which products are linked
 
+# Bonus: Distribution of 'reordered' outcome variable
+full_order_data %>% 
+  mutate(reordered = factor(reordered,
+                            levels = c(0,1),
+                            labels = c("No", "Yes"))) %>% 
+  ggplot(., aes(reordered, fill = reordered)) +
+  geom_bar() + labs(x = "Reordered Product?",
+       title = "Distribution of Reordering Products") +
+  scale_x_discrete(labels = c("No", "Yes")) +
+  theme_Publication() +
+  scale_colour_Publication() +
+  theme(legend.position = "none" )
+  
+
+
 ```
 
 ## **New Variable 9:**
@@ -343,14 +390,15 @@ ggplot(reorder_rate_by_position, aes(x = add_to_cart_order, y = reorder_rate)) +
 head(reorder_rate_by_position)
 ```
 
-## Merge New Variables back into Full DF
+Merge New Variables back into Full DF
 ===
 
 ``` {r merge new variables}
-
-full_order_data[1:1000,]
+# How it looks before merging
+head(full_order_data)
 
 full_order_data <- full_order_data %>% 
+  left_join(., product_count_per_user, by = c("user_id", "product_name")) %>% 
   left_join(., avg_order_time, by = "user_id") %>% 
   left_join(., dow_freq_order, by = c("order_dow", "product_name")) %>% 
   left_join(., hour_freq_order, by = c("order_hour_of_day", "product_name")) %>% 
@@ -360,15 +408,20 @@ full_order_data <- full_order_data %>%
   left_join(., product_reorder_ratio, by = c("user_id", "product_name")) %>% 
   left_join(., reorder_rate_by_position, by = "add_to_cart_order")
 
-full_order_data[1:1000,]
+# New final data set -- looks good
+head(full_order_data)
 
+# Remove extra objects from environment
 rm(hour_freq_order, order_size, product_count_per_user, product_reorder_ratio,
    reorder_counts, reorder_rate_by_position, avg_order_size, avg_order_time,
    dow_freq_order, products, aisles, depts)
+
+# Summary statistics for all variables in final data set
+summary(full_order_data)
 ```
 
 
-## Correlation Matrix
+Correlation Matrix
 ===
 
 ```{r correlation matrix}
@@ -386,18 +439,17 @@ corr_matrix <- full_order_data %>%
 corrplot(corr_matrix, method="shade", type="lower", 
          title="Instacart Correlation Matrix",
          tl.cex = 0.75, tl.col = "black", tl.srt = 45,
+         number.cex = 0.5,
          mar = c(0,0,1,0)) 
 ```
 
-### Mostly uncorrelated variables -- some that are correlated tend to be because they were created by that variable (reordered / product_reorder_ratio). We do find that reorder_rate & add_to_cart_order have a negative relationship, alongside reorder_rate & order_size. Total_reorders has a positive correlation w/ product_count_day & product_count_hour.
-
-===
+Mostly uncorrelated variables -- some that are correlated tend to be because they were created by that variable (reordered / product_reorder_ratio). We do find that reorder_rate & add_to_cart_order have a negative relationship, alongside reorder_rate & order_size. Total_reorders has a positive correlation w/ product_count_day & product_count_hour.
 
 # Model Building
 
-### For our models -- we have a huge data set (32m observations). I tried running it with the full dataset initally, and it takes waaay too long as it is computationally very expensive on my macbook. Instead, I decided to first subset a random sample of the data so it moves down from 32m obs -> 8m obs, 1/4 of the full data set. I understand by doing this we lose a lot of our data, but it is still large enough where I don't expect this to be enough of a problem -- our data is still very low-dimensional.
+For our models -- we have a huge data set (32m observations). I tried running it with the full dataset initally, and it takes waaay too long as it is computationally very expensive on my macbook. Instead, I decided to first subset a random sample of the data so it moves down from 32m obs -> 8m obs, 1/4 of the full data set. I understand by doing this we lose a lot of our data, but it is still large enough where I don't expect this to be enough of a problem -- our data is still very low-dimensional.
 
-### After subsetting the data, I then employed mini-batch training, which includes taking subsets of our shrunken data set defined as "batches" and apply regression models to this subset. We then iterate through this and update our model using each iteration. We run this algorithm until we hit the total number of batches, which is defined by the size of our training data set divided by the batch size (an arbitrary number we set -- not too high or else the model trains very slow). 
+After subsetting the data, I then employed mini-batch training, which includes taking subsets of our shrunken data set defined as "batches" and apply regression models to this subset. We then iterate through this and update our model using each iteration. We run this algorithm until we hit the total number of batches, which is defined by the size of our training data set divided by the batch size (an arbitrary number we set -- not too high or else the model trains very slow). 
 
 ``` {r data splitting}
 # data set is huge -- need to split it up randomly and rerun it -- use mini-batch training
@@ -426,10 +478,32 @@ test_data <- test_data %>%
   mutate_all(~ifelse(is.na(.), 0, .))
 # Again, we check -- looks good
 sum(is.na(test_data)) # 0
+
+# Summary statistics for all variables in final data subset
+summary(full_order_data)
+
+# Loop for getting mean & SD for all variables
+mean_values <- c()
+sd_values <- c()
+
+for (i in colnames(full_order_data)){
+  # Check if the column is numeric or integer
+  if (is.numeric(full_order_data[[i]]) || is.integer(full_order_data[[i]])){
+    column_mean <- mean(full_order_data[[i]], na.rm = TRUE)
+    column_sd <- sd(full_order_data[[i]], na.rm = TRUE)
+    mean_values <- c(mean_values, column_mean)
+    sd_values <- c(sd_values, column_sd)
+  }
+}
+# Maybe need to deal with NA's here
+mean_sd_df <- data.frame("Variables" = colnames(full_order_data)[-c(3,5,10:12)],
+                         "Mean" = c(mean_values), 
+                         "SD" = c(sd_values))
+
+mean_sd_df
 ```
 
 ## Logit
-===
 
 ``` {r logit}
 library(pROC)
@@ -447,7 +521,7 @@ for (i in 1:num_batches) {
   batch_data <- train_data[start_index:end_index, ]
 
   insta_logit <-  glm(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
-        add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+        add_to_cart_order + avg_hour + avg_day + product_count + product_count_day + product_count_hour +
         order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
       data = batch_data, family = "binomial")
 }
@@ -464,6 +538,7 @@ table(logit_threshold, test_data$reordered)
 # Test Error (diagonal/total)
 mean(logit_threshold==test_data$reordered, na.rm = T) # logit model correctly predicts 86.37% of the time
 # I.e. misclas error rate = 13.63%
+logit_test_error <- 1-mean(logit_threshold==test_data$reordered, na.rm = T)
 
 # ROC Curve & AUC Value
 roc_curve <- roc(test_data$reordered, logit_preds)
@@ -472,9 +547,7 @@ auc <- auc(roc_curve)
 print(paste("AUC:", auc))
 ```
 
-
 ## LDA & QDA
-===
 
 ``` {r LDA & QDA}
 library(MASS)
@@ -490,12 +563,12 @@ for (i in 1:num_batches) {
   batch_data <- train_data[start_index:end_index, ]
   
   insta_LDA <- lda(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order + 
-                     add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                     add_to_cart_order + avg_hour + avg_day + product_count + product_count_day + product_count_hour +
                      order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate,
                    data = batch_data)
   
   insta_QDA <- qda(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
-                   add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
+                   add_to_cart_order + avg_hour + avg_day + product_count + product_count_day + product_count_hour +
                    order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate,
                  data = batch_data)
   }
@@ -509,18 +582,30 @@ plot(insta_LDA)
 # Need to access column 'class' for LDA/QDA to create confusion matrix and calculate test error
 table(lda.pred$class, test_data$reordered)
 mean(lda.pred$class==test_data$reordered, na.rm = T) # LDA Correctly predicts 84.93% of time - misclassification error rate of 15.07%.
+lda_test_error <- 1-mean(lda.pred$class==test_data$reordered, na.rm = T)
 
 table(qda.pred$class, test_data$reordered) # QDA correctly predicts 83.00% of the time - misclas error rate = 17.00%. 
 mean(qda.pred$class==test_data$reordered, na.rm = T)
+qda_test_error <- 1-mean(qda.pred$class==test_data$reordered, na.rm = T)
+
+# AUC (LDA)
+roc_curve11 <- roc(test_data$reordered, as.numeric(lda.pred$class))
+plot(roc_curve11, main = "ROC Curve", col = "blue")
+auc11 <- auc(roc_curve11)
+print(paste("AUC:", auc11))
+
+# AUC (QDA)
+roc_curve12 <- roc(test_data$reordered, as.numeric(qda.pred$class))
+plot(roc_curve12, main = "ROC Curve", col = "blue")
+auc12 <- auc(roc_curve12)
+print(paste("AUC:", auc12))
 ```
 
-
 ## kNN
-
 ### Since kNN is a "lazy" learning method, a large data set takes way too long to train the model on. I tried this model initially on 10m observations, and it was gonna take over a day to run. So, we needed a much smaller subset of data -- we created a new subset on our 8m training data that we subsetted earlier, with a new subset of only 300,000 observations. This is a decrease in size by a factor of 26! Thus, our results should be taken with a grain of salt, since it might not be representative of our data and its findings, but it still should hopefully give us some meaningful insights into our results and give a sensible misclassification error rate.
-===
 
 ``` {r kNN}
+library(class)
 set.seed(18)
 # kNN
  #only gonna use significant predictors from previous models in KNN model to reduce feature space
@@ -560,10 +645,10 @@ knn_train <- train(as.factor(reordered) ~ order_number + order_dow + days_since_
                    tuneGrid = data.frame(k = k_values))  # Grid of k values
 
 # Print the results
-print(knn_train) # best results from k = 1:5 -- 5 had highest accuracy (0.7162)
+print(knn_train) # best results from k = 1:5 -- 5 had highest accuracy (0.7162) -- then we tried 5, 7, 9, & 11 -- 11 had the highest
 # Plot performance metric vs. k values
 plot(knn_train)
-
+best_neighbors <- knn_train$bestTune
 ## Loop through batches
 for (i in 1:knn_num_batches) {
   # Get indices for the current batch
@@ -577,17 +662,22 @@ for (i in 1:knn_num_batches) {
   knn_model <- knn(train = knn_batch_data[, predictors], 
                    test = knn_test_data[, predictors], 
                    cl = knn_batch_data$reordered, 
-                   k = 5)
+                   k = best_neighbors[1,1])
 }
 
-table(knn_model, knn_test_data$reordered) # KNN with K=5 confusion matrix
-mean(knn_model==knn_test_data$reordered, na.rm = T) # Prediction accuracy of 68.83%.
+table(knn_model, knn_test_data$reordered) # KNN with K=11 confusion matrix
+mean(knn_model==knn_test_data$reordered, na.rm = T) # Prediction accuracy of 70.51%.
+knn_test_error <- 1-mean(knn_model==knn_test_data$reordered, na.rm = T)
+
+# AUC Curve
+roc_curve9 <- roc(knn_test_data$reordered, as.numeric(knn_model))
+plot(roc_curve9, main = "ROC Curve", col = "blue")
+auc9 <- auc(roc_curve9)
+print(paste("AUC:", auc9))
 
 ```
 
-
 ## Classification Tree
-===
 
 ``` {r classification tree}
 library(tree)
@@ -605,7 +695,7 @@ for (i in 1:num_batches) {
   insta_tree <-  tree(as.factor(reordered) ~ order_number + order_dow + order_hour_of_day + 
                         days_since_prior_order + add_to_cart_order + avg_hour + avg_day + 
                         product_count_day + product_count_hour + order_size + avg_order_size + 
-                        total_reorders + product_reorder_ratio + reorder_rate, 
+                        total_reorders + product_reorder_ratio + reorder_rate + product_count, 
                       data = batch_data)
 }
 
@@ -638,11 +728,16 @@ tree.pred2 <- predict(prune.insta, test_data, # predicting values in our test sp
                      type = "class")
 table(tree.pred2, test_data$reordered) # same table as before -- test error of 87.74%
 mean(tree.pred2==test_data$reordered)
+tree_test_error <- 1-mean(tree.pred2==test_data$reordered)
+
+# AUC Curve
+roc_curve7 <- roc(test_data$reordered, as.numeric(tree.pred2))
+plot(roc_curve7, main = "ROC Curve", col = "blue")
+auc7 <- auc(roc_curve7)
+print(paste("AUC:", auc7))
 ```
 
-
 ## Random Forest
-===
 
 ``` {r random forest}
 library(randomForest)
@@ -663,7 +758,7 @@ for (i in 1:num_batches) {
   insta_rf <-  randomForest(as.factor(reordered) ~ order_number + order_dow + order_hour_of_day + 
                               days_since_prior_order + add_to_cart_order + avg_hour + avg_day + 
                               product_count_day + product_count_hour +order_size + avg_order_size + 
-                              total_reorders + product_reorder_ratio + reorder_rate, 
+                              total_reorders + product_reorder_ratio + reorder_rate + product_count, 
                             data = batch_data)
 }
 
@@ -676,37 +771,48 @@ rf_preds <- predict(insta_rf, newdata = test_data,
 table(rf_preds, test_data$reordered)
 # Misclassification Error Rate (test error) of 11.77%. Correctly predicts 88.23% of the values.
 mean(rf_preds==test_data$reordered)
+rf_test_error <- 1-mean(rf_preds==test_data$reordered)
+
+# AUC Curve
+roc_curve5 <- roc(test_data$reordered, as.numeric(rf_preds))
+plot(roc_curve5, main = "ROC Curve", col = "blue")
+auc5 <- auc(roc_curve5)
+print(paste("AUC:", auc5))
 
 ```
 
-
 ## Boosting
 ### Because our memory is so full at this point, we can only run regression of size n=50000. If the memory clears up I can try running this regression again & seeing what results I can get at a much larger sample size, with more hypertuning of the parameters.
-===
 
-``` {r boosting}
-library(tidyverse)
+``` {r boosting, error = TRUE}
 ### Boosting ###
 ################
 # Need to make a subset of our data to run on xgboost
 set.seed(88)
-xgboost_train_data <- train_data %>% 
-  select(c(order_number, order_dow, order_hour_of_day, days_since_prior_order,
-           add_to_cart_order, avg_hour, avg_day, product_count_day, product_count_hour,
-           order_size, avg_order_size, total_reorders, product_reorder_ratio, reorder_rate,
-           reordered)) %>%
-  mutate(reordered = as.factor(reordered)) %>% 
-  slice(sample(nrow(.), size = 50000)) 
 
-xgboost_test_data <- test_data %>% 
-  select(c(order_number, order_dow, order_hour_of_day, days_since_prior_order,
-           add_to_cart_order, avg_hour, avg_day, product_count_day, product_count_hour,
-           order_size, avg_order_size, total_reorders, product_reorder_ratio, reorder_rate,
-           reordered)) %>%
-  mutate(reordered = as.factor(reordered)) %>% 
-  slice(sample(nrow(.), size = 12500))
+xgboost_subset_data <- train_data[sample(nrow(train_data), 62500),]
 
-head(xgboost_train_data)
+xgboost_train_index <- sample(1:nrow(xgboost_subset_data), 0.8*nrow(xgboost_subset_data))
+xgboost_train_data <- xgboost_subset_data[xgboost_train_index,]
+xgboost_test_data <- xgboost_subset_data[-xgboost_train_index,]
+
+xgboost_train_data <- xgboost_train_data %>% 
+  mutate(reordered = as.factor(reordered)) %>%
+  dplyr::select(order_number, order_dow, order_hour_of_day, days_since_prior_order,
+         add_to_cart_order, avg_hour, avg_day, product_count, product_count_day, 
+         product_count_hour, order_size, avg_order_size, total_reorders, 
+         product_reorder_ratio, reorder_rate, reordered) %>% 
+  glimpse
+
+
+xgboost_test_data <- xgboost_test_data %>% 
+  mutate(reordered = as.factor(reordered)) %>% 
+  dplyr::select(order_number, order_dow, order_hour_of_day, days_since_prior_order, 
+         add_to_cart_order, avg_hour, avg_day, product_count, product_count_day, 
+         product_count_hour, order_size, avg_order_size, total_reorders, 
+         product_reorder_ratio, reorder_rate, reordered) %>% 
+  glimpse
+
 
 library(caret)
 library(xgboost)
@@ -723,7 +829,7 @@ grid_tune <- expand.grid(
 
 # Cross-validation
 train_control <- trainControl(method = "cv",
-                              number = 5,,
+                              number = 5,
                               verboseIter = TRUE,
                               allowParallel = TRUE)
 
@@ -761,19 +867,45 @@ xgb_final
 boost_preds <- predict(xgb_final, newdata = xgboost_test_data, type = "raw")
 table(boost_preds, xgboost_test_data$reordered)
 mean(boost_preds==xgboost_test_data$reordered) # Correctly predicts 88.44% of the time.
+boost_test_error <- 1-mean(boost_preds==xgboost_test_data$reordered)
 
 # Evaluate model
 library(pROC)
-roc_curve2 <- roc(xgboost_test_data$reordered, as.numeric(boost_preds))
-plot(roc_curve2, main = "ROC Curve", col = "blue")
-auc2 <- auc(roc_curve2)
-print(paste("AUC:", auc2)) # AUC: 86.80
+roc_curve_boost <- roc(xgboost_test_data$reordered, as.numeric(boost_preds))
+plot(roc_curve_boost, main = "ROC Curve", col = "blue")
+auc_boost <- auc(roc_curve_boost)
+print(paste("AUC:", auc_boost)) # AUC: 86.80
+
+## Plots of best tuning hyperparameters
+tuning_results <- data.frame(xgb_tune$results)
+
+# heatmap
+ggplot(tuning_results, aes(x = max_depth, y = eta, z = Accuracy)) +
+  geom_tile(aes(fill = Accuracy)) +  # Color represents accuracy
+  scale_fill_viridis_c() +
+  labs(title = "XGBoost Tuning - Accuracy Heatmap",
+       x = "Max Depth",
+       y = "Learning Rate (eta)",
+       z = "Accuracy") +
+  theme_Publication()+
+    theme(legend.key.width = unit(1.5, "cm"))
+  
+# Line Chart
+  ggplot(tuning_results, aes(x = nrounds, y = Accuracy, color = eta)) +
+  geom_line() +
+  facet_wrap(~ max_depth) +  # Facet by max_depth
+  labs(title = "XGBoost Tuning - Accuracy by Parameters",
+       x = "Number of Trees (nrounds)",
+       y = "Accuracy",
+       color = "Learning Rate (eta)") +
+  theme_Publication() +
+    theme(legend.key.width = unit(1, "cm"))
+
 ```
 
 ## SVM
-===
 
-``` {r svm}
+``` {r svm, error = TRUE}
 set.seed(55)
 # Create a subset of data to use
 svm_subset_data <- train_data[sample(nrow(train_data), 10000),]
@@ -784,9 +916,11 @@ svm_test_data <- svm_subset_data[-svm_train_index,]
 
 library(e1071)
 # Find best hyperparameters for SVM model
-tune.out <- tune(svm , reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
-                             add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
-                             order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+tune.out <- tune(svm, 
+                 reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
+                   add_to_cart_order + avg_hour + avg_day + product_count + product_count_day + 
+                   product_count_hour + order_size + avg_order_size + total_reorders + 
+                   product_reorder_ratio + reorder_rate, 
                  data = svm_train_data,
                  kernel = "radial",
                  ranges = list(
@@ -801,8 +935,8 @@ final_hypers <- tune.out$best.parameters
 
 # Support Vector Machines
 svmfit <- svm(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
-                             add_to_cart_order + avg_hour + avg_day + product_count_day + product_count_hour +
-                             order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
+                add_to_cart_order + avg_hour + avg_day + product_count + product_count_day + 
+                product_count_hour + order_size + avg_order_size + total_reorders + product_reorder_ratio + reorder_rate, 
                 data = svm_train_data, 
                 kernel = "radial", 
                 gamma = final_hypers$gamma, 
@@ -816,12 +950,55 @@ svm_class_preds <- ifelse(svm_preds > 0.5, 1, 0)
 
 table(svm_class_preds, svm_test_data$reordered) # Correctly predicts 84.7% of the time. 
 mean(svm_class_preds==svm_test_data$reordered) # Misclassification error rate of 15.3%
+svm_test_error <- 1-mean(svm_class_preds==svm_test_data$reordered)
+
+# Plot AUC
+roc_curve_svm <- roc(svm_test_data$reordered, svm_preds)
+plot(roc_curve_svm, main = "ROC Curve", col = "blue")
+auc_svm <- auc(roc_curve_svm)
+print(paste("AUC:", auc_svm))
 ```
 
+## Plot of Final Results (test errors)
+
+``` {r results, error = TRUE}
+final_test_errors <- c(logit_test_error, lda_test_error, qda_test_error,
+                       knn_test_error, tree_test_error, rf_test_error,
+                       boost_test_error, svm_test_error)
+model_names <- c("Logit", "LDA", "QDA", "kNN", "Classification 
+  Tree",
+                 "Random Forest", "Boosting", "SVM")
+# Plot
+ggplot(data.frame(model_names, final_test_errors), aes(model_names, final_test_errors, fill = as.factor(model_names))) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Test Error Comparison",
+       x = "Model Names",
+       y = "Misclassification Rate") +
+  theme_Publication() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(size = 9)) +
+  scale_colour_Publication() +
+  geom_text(aes(label = round(final_test_errors, 3)), vjust = -0.5, size = 3)
 
 
+# Combine ROC curve data into one dataset
+roc_data <- rbind(data.frame(Model = "Logit", FPR = roc_curve_logit$specificities, TPR = roc_curve_logit$sensitivities),
+                  data.frame(Model = "LDA", FPR = roc_curve_lda$specificities, TPR = roc_curve_lda$sensitivities),
+                  data.frame(Model = "QDA", FPR = roc_curve_qda$specificities, TPR = roc_curve_qda$sensitivities),
+                  data.frame(Model = "kNN", FPR = roc_curve_knn$specificities, TPR = roc_curve_knn$sensitivities),
+                  data.frame(Model = "Tree", FPR = roc_curve_tree$specificities, TPR = roc_curve_tree$sensitivities),
+                  data.frame(Model = "Random Forest", FPR = roc_curve_rf$specificities, TPR = roc_curve_rf$sensitivities),
+                  data.frame(Model = "Boosting", FPR = roc_curve_boost$specificities, TPR = roc_curve_boost$sensitivities),
+                  data.frame(Model = "SVM", FPR = roc_curve_svm$specificities, TPR = roc_curve_svm$sensitivities))
+# Repeat for other models...
 
-``` {r save workspace}
-save.image()
-
+# Plot ROC curves for all models
+ggplot(roc_data, aes(x = FPR, y = TPR, color = Model)) +
+  geom_line() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +  # Add diagonal line for reference
+  labs(title = "ROC Curves for Different Models",
+       x = "False Positive Rate",
+       y = "True Positive Rate",
+       color = "Model") +
+  theme_minimal()
 ```
