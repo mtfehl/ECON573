@@ -541,10 +541,10 @@ mean(logit_threshold==test_data$reordered, na.rm = T) # logit model correctly pr
 logit_test_error <- 1-mean(logit_threshold==test_data$reordered, na.rm = T)
 
 # ROC Curve & AUC Value
-roc_curve <- roc(test_data$reordered, logit_preds)
-plot(roc_curve, main = "ROC Curve", col = "blue")
-auc <- auc(roc_curve)
-print(paste("AUC:", auc))
+roc_curve_logit <- roc(test_data$reordered, logit_preds)
+plot(roc_curve_logit, main = "ROC Curve", col = "blue")
+auc_logit <- auc(roc_curve_logit)
+print(paste("AUC:", auc_logit))
 ```
 
 ## LDA & QDA
@@ -589,16 +589,16 @@ mean(qda.pred$class==test_data$reordered, na.rm = T)
 qda_test_error <- 1-mean(qda.pred$class==test_data$reordered, na.rm = T)
 
 # AUC (LDA)
-roc_curve11 <- roc(test_data$reordered, as.numeric(lda.pred$class))
-plot(roc_curve11, main = "ROC Curve", col = "blue")
-auc11 <- auc(roc_curve11)
-print(paste("AUC:", auc11))
+roc_curve_lda <- roc(test_data$reordered, as.numeric(lda.pred$class))
+plot(roc_curve_lda, main = "ROC Curve", col = "blue")
+auc_lda <- auc(roc_curve_lda)
+print(paste("AUC:", auc_lda))
 
 # AUC (QDA)
-roc_curve12 <- roc(test_data$reordered, as.numeric(qda.pred$class))
-plot(roc_curve12, main = "ROC Curve", col = "blue")
-auc12 <- auc(roc_curve12)
-print(paste("AUC:", auc12))
+roc_curve_qda <- roc(test_data$reordered, as.numeric(qda.pred$class))
+plot(roc_curve_qda, main = "ROC Curve", col = "blue")
+auc_qda <- auc(roc_curve_qda)
+print(paste("AUC:", auc_qda))
 ```
 
 ## kNN
@@ -670,10 +670,10 @@ mean(knn_model==knn_test_data$reordered, na.rm = T) # Prediction accuracy of 70.
 knn_test_error <- 1-mean(knn_model==knn_test_data$reordered, na.rm = T)
 
 # AUC Curve
-roc_curve9 <- roc(knn_test_data$reordered, as.numeric(knn_model))
-plot(roc_curve9, main = "ROC Curve", col = "blue")
-auc9 <- auc(roc_curve9)
-print(paste("AUC:", auc9))
+roc_curve_knn <- roc(knn_test_data$reordered, as.numeric(knn_model))
+plot(roc_curve_knn, main = "ROC Curve", col = "blue")
+auc_knn <- auc(roc_curve_knn)
+print(paste("AUC:", auc_knn))
 
 ```
 
@@ -731,10 +731,10 @@ mean(tree.pred2==test_data$reordered)
 tree_test_error <- 1-mean(tree.pred2==test_data$reordered)
 
 # AUC Curve
-roc_curve7 <- roc(test_data$reordered, as.numeric(tree.pred2))
-plot(roc_curve7, main = "ROC Curve", col = "blue")
-auc7 <- auc(roc_curve7)
-print(paste("AUC:", auc7))
+roc_curve_tree <- roc(test_data$reordered, as.numeric(tree.pred2))
+plot(roc_curve_tree, main = "ROC Curve", col = "blue")
+auc_tree <- auc(roc_curve_tree)
+print(paste("AUC:", auc_tree))
 ```
 
 ## Random Forest
@@ -774,10 +774,10 @@ mean(rf_preds==test_data$reordered)
 rf_test_error <- 1-mean(rf_preds==test_data$reordered)
 
 # AUC Curve
-roc_curve5 <- roc(test_data$reordered, as.numeric(rf_preds))
-plot(roc_curve5, main = "ROC Curve", col = "blue")
-auc5 <- auc(roc_curve5)
-print(paste("AUC:", auc5))
+roc_curve_rf <- roc(test_data$reordered, as.numeric(rf_preds))
+plot(roc_curve_rf, main = "ROC Curve", col = "blue")
+auc_rf <- auc(roc_curve_rf)
+print(paste("AUC:", auc_rf))
 
 ```
 
@@ -789,13 +789,14 @@ print(paste("AUC:", auc5))
 ################
 # Need to make a subset of our data to run on xgboost
 set.seed(88)
-
+# Create subset & indexes
 xgboost_subset_data <- train_data[sample(nrow(train_data), 62500),]
 
 xgboost_train_index <- sample(1:nrow(xgboost_subset_data), 0.8*nrow(xgboost_subset_data))
 xgboost_train_data <- xgboost_subset_data[xgboost_train_index,]
 xgboost_test_data <- xgboost_subset_data[-xgboost_train_index,]
 
+# Train data subset
 xgboost_train_data <- xgboost_train_data %>% 
   mutate(reordered = as.factor(reordered)) %>%
   dplyr::select(order_number, order_dow, order_hour_of_day, days_since_prior_order,
@@ -803,8 +804,11 @@ xgboost_train_data <- xgboost_train_data %>%
          product_count_hour, order_size, avg_order_size, total_reorders, 
          product_reorder_ratio, reorder_rate, reordered) %>% 
   glimpse
+# Convert into numeric matrix to put into boosting function
+xgboost_train_data_x <- as.matrix(xgboost_train_data[, -16])
+xgboost_train_data_x <- apply(xgboost_train_data_x, 2, as.numeric)
 
-
+# Test data subset
 xgboost_test_data <- xgboost_test_data %>% 
   mutate(reordered = as.factor(reordered)) %>% 
   dplyr::select(order_number, order_dow, order_hour_of_day, days_since_prior_order, 
@@ -812,7 +816,9 @@ xgboost_test_data <- xgboost_test_data %>%
          product_count_hour, order_size, avg_order_size, total_reorders, 
          product_reorder_ratio, reorder_rate, reordered) %>% 
   glimpse
-
+# Convert into numeric matrix for test error rate calculation at end
+xgboost_test_data_x <- as.matrix(xgboost_test_data[, -16])
+xgboost_test_data_x <- apply(xgboost_test_data_x, 2, as.numeric)
 
 library(caret)
 library(xgboost)
@@ -833,8 +839,8 @@ train_control <- trainControl(method = "cv",
                               verboseIter = TRUE,
                               allowParallel = TRUE)
 
-xgb_tune <- train(x = xgboost_train_data[,-15],
-                  y = xgboost_train_data[,15],
+xgb_tune <- train(x = xgboost_train_data_x,
+                  y = xgboost_train_data[, 16],
                   trControl = train_control,
                   tuneGrid = grid_tune,
                   method = "xgbTree",
@@ -855,8 +861,8 @@ final_grid <- expand.grid(
   subsample = best_params$subsample
 )
 
-xgb_final <- train(x = xgboost_train_data[,-15],
-                  y = xgboost_train_data[,15],
+xgb_final <- train(x = xgboost_train_data_x,
+                  y = xgboost_train_data[, 16],
                   trControl = train_control,
                   tuneGrid = final_grid,
                   method = "xgbTree",
@@ -864,7 +870,7 @@ xgb_final <- train(x = xgboost_train_data[,-15],
 
 xgb_final
 # Misclassification error rate of 11.56%.
-boost_preds <- predict(xgb_final, newdata = xgboost_test_data, type = "raw")
+boost_preds <- predict(xgb_final, newdata = xgboost_test_data_x, type = "raw")
 table(boost_preds, xgboost_test_data$reordered)
 mean(boost_preds==xgboost_test_data$reordered) # Correctly predicts 88.44% of the time.
 boost_test_error <- 1-mean(boost_preds==xgboost_test_data$reordered)
@@ -879,6 +885,7 @@ print(paste("AUC:", auc_boost)) # AUC: 86.80
 ## Plots of best tuning hyperparameters
 tuning_results <- data.frame(xgb_tune$results)
 
+
 # heatmap
 ggplot(tuning_results, aes(x = max_depth, y = eta, z = Accuracy)) +
   geom_tile(aes(fill = Accuracy)) +  # Color represents accuracy
@@ -887,7 +894,7 @@ ggplot(tuning_results, aes(x = max_depth, y = eta, z = Accuracy)) +
        x = "Max Depth",
        y = "Learning Rate (eta)",
        z = "Accuracy") +
-  theme_Publication()+
+  theme_Publication() +
     theme(legend.key.width = unit(1.5, "cm"))
   
 # Line Chart
@@ -932,6 +939,20 @@ tune.out <- tune(svm,
 tune.out
 
 final_hypers <- tune.out$best.parameters
+
+results <- as.data.frame(tune.out$performances)
+
+
+# Plotting cost vs. gamma with performance as color
+ggplot(results, aes(x = cost, y = gamma, fill = -error)) +
+  geom_tile() +
+  scale_fill_gradient(low = "yellow", high = "red", labels = round(1 - results$error, 2)) +
+  labs(title = "Hyperparameter Tuning Results",
+       x = "Cost",
+       y = "Gamma",
+       fill = "Accuracy") +
+  theme_Publication() +
+  theme(legend.key.width = unit(1, "cm"))
 
 # Support Vector Machines
 svmfit <- svm(reordered ~ order_number + order_dow + order_hour_of_day + days_since_prior_order +
