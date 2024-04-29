@@ -1022,4 +1022,20 @@ ggplot(roc_data, aes(x = FPR, y = TPR, color = Model)) +
        y = "True Positive Rate",
        color = "Model") +
   theme_minimal()
+
+# Combine AUC data into one dataset
+auc_data <- data.frame(Model = model_names, 
+                       AUC = c(auc_logit, auc_lda, auc_qda, auc_knn, auc_tree, auc_rf, auc_boost, auc_svm))
+
+# Plot AUC Scores for all models
+ggplot(auc_data, aes(Model, AUC, fill = Model)) + 
+  geom_bar(stat = "identity") +
+  labs(title = "AUC Comparison",
+       x = "Model Names",
+       y = "AUC") +
+  theme_Publication() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(size = 9)) +
+  scale_colour_Publication() +
+  geom_text(aes(label = round(AUC, 3)), vjust = -0.5, size = 3)
 ```
